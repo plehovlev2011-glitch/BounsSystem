@@ -2,7 +2,7 @@
 const GITHUB_CONFIG = {
     owner: 'plehovlev2011-glitch',
     repo: 'BonusSystem',
-    token: '', // ОСТАВЬТЕ ПУСТЫМ!
+    token: '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',
     dataFile: 'bonus_data.json'
 };
 
