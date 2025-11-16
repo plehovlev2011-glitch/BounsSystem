@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>POS Панель - ПЕРЕЦ</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: Arial, sans-serif; background: #2c3e50; color: white; }
+        .container { max-width: 500px; margin: 20px auto; padding: 20px; }
+        h1 { text-align: center; margin-bottom: 20px; color: #e74c3c; }
+        .scanner-area { background: #34495e; padding: 20px; border-radius: 10px; margin-bottom: 20px; }
+        #scannerInput { width: 100%; padding: 15px; font-size: 18px; margin-bottom: 10px; border: none; border-radius: 5px; }
+        .user-info { background: #34495e; padding: 15px; border-radius: 10px; margin-bottom: 20px; display: none; }
+        .bonus-controls { background: #34495e; padding: 20px; border-radius: 10px; }
+        .number-pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 15px; }
+        .number-btn { padding: 20px; font-size: 20px; background: #3498db; border: none; border-radius: 5px; color: white; cursor: pointer; }
+        .number-btn:hover { background: #2980b9; }
+        .action-btn { padding: 15px; font-size: 16px; border: none; border-radius: 5px; cursor: pointer; margin: 5px; }
+        .add-btn { background: #27ae60; color: white; }
+        .subtract-btn { background: #e74c3c; color: white; }
+        .clear-btn { background: #f39c12; color: white; }
+        #bonusAmount { width: 100%; padding: 15px; font-size: 20px; text-align: center; margin-bottom: 15px; border: none; border-radius: 5px; }
+        .status { padding: 10px; border-radius: 5px; margin-top: 10px; text-align: center; display: none; }
+        .success { background: #27ae60; }
+        .error { background: #e74c3c; }
+        .loading { text-align: center; color: #bbb; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>POS Панель - ПЕРЕЦ</h1>
+        
+        <div class="scanner-area">
+            <h3>Сканирование QR-кода:</h3>
+            <input type="text" id="scannerInput" placeholder="Наведите сканер сюда или введите данные вручную..." autofocus>
+        </div>
+
+        <div class="user-info" id="userInfo">
+            <h3>Информация о клиенте:</h3>
+            <div class="loading" id="loadingUser">Загрузка...</div>
+            <div id="userContent" class="hidden">
+                <p>Никнейм: <span id="infoUsername"></span></p>
+                <p>Текущие бонусы: <span id="infoBonuses"></span></p>
+            </div>
+        </div>
+
+        <div class="bonus-controls">
+            <h3>Управление бонусами:</h3>
+            <input type="text" id="bonusAmount" placeholder="0" readonly>
+            
+            <div class="number-pad">
+                <button class="number-btn" onclick="addNumber('1')">1</button>
+                <button class="number-btn" onclick="addNumber('2')">2</button>
+                <button class="number-btn" onclick="addNumber('3')">3</button>
+                <button class="number-btn" onclick="addNumber('4')">4</button>
+                <button class="number-btn" onclick="addNumber('5')">5</button>
+                <button class="number-btn" onclick="addNumber('6')">6</button>
+                <button class="number-btn" onclick="addNumber('7')">7</button>
+                <button class="number-btn" onclick="addNumber('8')">8</button>
+                <button class="number-btn" onclick="addNumber('9')">9</button>
+                <button class="number-btn" onclick="addNumber('0')">0</button>
+                <button class="number-btn" onclick="clearAmount()" style="background: #95a5a6;">C</button>
+            </div>
+
+            <button class="action-btn add-btn" onclick="addBonuses()">Начислить бонусы</button>
+            <button class="action-btn subtract-btn" onclick="subtractBonuses()">Списать бонусы</button>
+            
+            <div class="status" id="statusMessage"></div>
+        </div>
+    </div>
+
+    <script src="config.js"></script>
+    <script>
+        // Функции шифрования и GitHub API такие же как в auth.js
+        const ENCRYPTION_KEY = 'pepper_bonus_secret_key_2024';
+        
+        function encrypt(text) {
+            const textBytes = new TextEncoder().encode(text);
+            const keyBytes = new TextEncoder().encode(ENCRYPTION_KEY.padEnd(32, '0').slice(0, 32));
+            
+            return crypto.subtle.importKey('raw', keyBytes, { name: 'AES-CBC' }, false, ['encrypt'])
+                .then(key => {
+                    const iv = crypto.getRandomValues(new Uint8Array(16));
+                    return crypto.subtle.encrypt({ name: 'AES-CBC', iv }, key, textBytes)
+                        .then(encrypted => {
+                            const combined = new Uint8Array(iv.length + encrypted.byteLength);
+                            combined.set(iv, 0);
+                            combined.set(new Uint8Array(encrypted), iv.length);
+                            return btoa(String.fromCharCode(...combined));
+                        });
+                });
+        }
+
+        function decrypt(encryptedText) {
+            const combined = new Uint8Array(atob(encryptedText).split('').map(c => c.charCodeAt(0)));
+            const iv = combined.slice(0, 16);
+            const encrypted = combined.slice(16);
+            const keyBytes = new TextEncoder().encode(ENCRYPTION_KEY.padEnd(32, '0').slice(0, 32));
+            
+            return crypto.subtle.importKey('raw', keyBytes, { name: 'AES-CBC' }, false, ['decrypt'])
+                .then(key => {
+                    return crypto.subtle.decrypt({ name: 'AES-CBC', iv }, key, encrypted)
+                        .then(decrypted => {
+                            return new TextDecoder().decode(decrypted);
+                        });
+                });
+        }
+
+        async function githubAPI(endpoint, method = 'GET', data = null) {
+            const url = `https://api.github.com/${endpoint}`;
+            const options = {
+                method: method,
+                headers: {
+                    'Authorization': `token ${GITHUB_CONFIG.token}`,
+                    'Content-Type': 'application/json',
+                }
+            };
+            
+            if (data) {
+                options.body = JSON.stringify(data);
+            }
+            
+            try {
+                const response = await fetch(url, options);
+                if (!response.ok) throw new Error(`GitHub API error: ${response.status}`);
+                return await response.json();
+            } catch (error) {
+                console.error('GitHub API error:', error);
+                throw error;
+            }
+        }
+
+        async function loadUserData() {
+            try {
+                const content = await githubAPI(`repos/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/contents/${GITHUB_CONFIG.dataFile}`);
+                const encryptedData = atob(content.content);
+                const decryptedJson = await decrypt(encryptedData);
+                return JSON.parse(decryptedJson);
+            } catch (error) {
+                if (error.message.includes('404')) {
+                    return { users: {} };
+                }
+                throw error;
+            }
+        }
+
+        async function saveUserData(data) {
+            const jsonString = JSON.stringify(data);
+            const encryptedData = await encrypt(jsonString);
+            
+            try {
+                const currentContent = await githubAPI(`repos/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/contents/${GITHUB_CONFIG.dataFile}`);
+                
+                return await githubAPI(`repos/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/contents/${GITHUB_CONFIG.dataFile}`, 'PUT', {
+                    message: 'Update bonus data',
+                    content: btoa(encryptedData),
+                    sha: currentContent.sha
+                });
+            } catch (error) {
+                if (error.message.includes('404')) {
+                    return await githubAPI(`repos/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/contents/${GITHUB_CONFIG.dataFile}`, 'PUT', {
+                        message: 'Create bonus data',
+                        content: btoa(encryptedData)
+                    });
+                }
+                throw error;
+            }
+        }
+
+        let currentUser = null;
+        const scannerInput = document.getElementById('scannerInput');
+        const userInfo = document.getElementById('userInfo');
+        const bonusAmount = document.getElementById('bonusAmount');
+
+        scannerInput.addEventListener('input', function(e) {
+            const qrData = e.target.value;
+            try {
+                const userData = JSON.parse(qrData);
+                processScannedUser(userData);
+            } catch {
+                // Невалидные данные QR-кода
+            }
+        });
+
+        async function processScannedUser(userData) {
+            document.getElementById('loadingUser').classList.remove('hidden');
+            document.getElementById('userContent').classList.add('hidden');
+            userInfo.style.display = 'block';
+            
+            try {
+                const data = await loadUserData();
+                const user = Object.values(data.users).find(u => u.userId === userData.userId);
+                
+                if (user) {
+                    currentUser = {
+                        username: Object.keys(data.users).find(key => data.users[key].userId === userData.userId),
+                        ...user
+                    };
+                    
+                    document.getElementById('infoUsername').textContent = currentUser.username;
+                    document.getElementById('infoBonuses').textContent = currentUser.bonuses;
+                    
+                    document.getElementById('loadingUser').classList.add('hidden');
+                    document.getElementById('userContent').classList.remove('hidden');
+                    showStatus('Клиент найден!', 'success');
+                } else {
+                    showStatus('Клиент не найден!', 'error');
+                    userInfo.style.display = 'none';
+                }
+            } catch (error) {
+                showStatus('Ошибка загрузки: ' + error.message, 'error');
+            }
+            
+            scannerInput.value = '';
+        }
+
+        function addNumber(num) {
+            if (bonusAmount.value === '0') {
+                bonusAmount.value = num;
+            } else {
+                bonusAmount.value += num;
+            }
+        }
+
+        function clearAmount() {
+            bonusAmount.value = '0';
+        }
+
+        async function addBonuses() {
+            if (!currentUser) {
+                showStatus('Сначала отсканируйте QR-код!', 'error');
+                return;
+            }
+
+            const amount = parseInt(bonusAmount.value);
+            if (amount <= 0) {
+                showStatus('Введите корректную сумму!', 'error');
+                return;
+            }
+
+            try {
+                const data = await loadUserData();
+                data.users[currentUser.username].bonuses += amount;
+                await saveUserData(data);
+                
+                currentUser.bonuses = data.users[currentUser.username].bonuses;
+                document.getElementById('infoBonuses').textContent = currentUser.bonuses;
+                
+                showStatus(`Начислено ${amount} бонусов!`, 'success');
+                clearAmount();
+            } catch (error) {
+                showStatus('Ошибка: ' + error.message, 'error');
+            }
+        }
+
+        async function subtractBonuses() {
+            if (!currentUser) {
+                showStatus('Сначала отсканируйте QR-код!', 'error');
+                return;
+            }
+
+            const amount = parseInt(bonusAmount.value);
+            if (amount <= 0) {
+                showStatus('Введите корректную сумму!', 'error');
+                return;
+            }
+
+            try {
+                const data = await loadUserData();
+                if (data.users[currentUser.username].bonuses < amount) {
+                    showStatus('Недостаточно бонусов!', 'error');
+                    return;
+                }
+
+                data.users[currentUser.username].bonuses -= amount;
+                await saveUserData(data);
+                
+                currentUser.bonuses = data.users[currentUser.username].bonuses;
+                document.getElementById('infoBonuses').textContent = currentUser.bonuses;
+                
+                showStatus(`Списано ${amount} бонусов!`, 'success');
+                clearAmount();
+            } catch (error) {
+                showStatus('Ошибка: ' + error.message, 'error');
+            }
+        }
+
+        function showStatus(message, type) {
+            const status = document.getElementById('statusMessage');
+            status.textContent = message;
+            status.className = `status ${type}`;
+            status.style.display = 'block';
+            
+            setTimeout(() => {
+                status.style.display = 'none';
+            }, 3000);
+        }
+    </script>
+</body>
+</html>
