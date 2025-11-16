@@ -31,10 +31,28 @@ function decrypt(encryptedText) {
         });
 }
 
+// Получение токена из Environment Variables
+function getGitHubToken() {
+    // Для Vercel используем import.meta.env
+    if (typeof import !== 'undefined' && import.meta && import.meta.env) {
+        return import.meta.env.VERCEL_GITHUB_TOKEN || import.meta.env.GITHUB_TOKEN;
+    }
+    // Для Netlify используем process.env
+    if (typeof process !== 'undefined' && process.env) {
+        return process.env.GITHUB_TOKEN;
+    }
+    // Локальная разработка
+    return GITHUB_CONFIG.token;
+}
+
 // GitHub API функции
 async function githubAPI(endpoint, method = 'GET', data = null) {
     const url = `https://api.github.com/${endpoint}`;
-    const token = process.env.GITHUB_TOKEN || GITHUB_CONFIG.token;
+    const token = getGitHubToken();
+    
+    if (!token) {
+        throw new Error('GitHub token not configured');
+    }
     
     const options = {
         method: method,
